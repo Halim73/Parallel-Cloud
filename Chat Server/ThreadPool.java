@@ -387,7 +387,7 @@ public class ThreadPool {
                             ((PrintWriter)chatOutputs.get(chatUsers.get(directChatRecipient)).get(0)).println(message);
                             continue;
                         }
-                        if(input.equalsIgnoreCase("%list%")){
+                        if(input.equalsIgnoreCase("%list")){
                             chatUsers.forEachKey(10,(String s)->{
                                 try{
                                     messages.put("\tUser:"+s);
