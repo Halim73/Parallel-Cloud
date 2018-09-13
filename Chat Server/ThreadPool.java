@@ -358,8 +358,10 @@ public class ThreadPool {
                     out.println(userName);
 
                     String input;
-
+                    String directChatRecipient = "";
                     boolean streaming = false;
+                    boolean directChat = false;
+
                     while(true){
                         input = in.readLine();
                         if(input == null || input.isEmpty())continue;
@@ -368,6 +370,22 @@ public class ThreadPool {
                             out.println(".@kill");
                             chatOutputs.remove(client);
                             break;
+                        }
+                        if(input.startsWith("@!")){
+                            directChat = false;
+                            continue;
+                        }
+                        if(input.startsWith("@@")){//@@-user
+                            String[]parse = input.split("-");
+                            directChatRecipient = parse[1].toUpperCase();
+                            directChat = true;
+                            continue;
+                        }
+                        if(directChat){
+                            String message = "[Priv] "+userName+": "+input;
+                            out.println(message);
+                            ((PrintWriter)chatOutputs.get(chatUsers.get(directChatRecipient)).get(0)).println(message);
+                            continue;
                         }
                         if(input.equalsIgnoreCase("%list%")){
                             chatUsers.forEachKey(10,(String s)->{
@@ -401,6 +419,7 @@ public class ThreadPool {
                             ((PrintWriter)chatOutputs.get(chatUsers.get(name.toUpperCase())).get(0)).println("[Priv] "+userName+": "+message);
                             continue;
                         }
+
                         if(input.startsWith("%*file ")){
                             String fileName = input.substring("%*file ".length());
                             String recipient = "";
