@@ -70,79 +70,65 @@ public class CapitalizeClient {
         DefaultCaret caret = (DefaultCaret)messageArea.getCaret();
         caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
         // Add Listeners
-        record.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                Runnable recordThread = ()->{
-                    recording = true;
+        record.addActionListener(a-> {
+            Runnable recordThread = ()->{
+                recording = true;
+                boolean toDo =  false;
 
-                    ByteArrayOutputStream os = new ByteArrayOutputStream();
-                    String name = user+"_testSound.wav";
-                    File file = new File(name);
+                String name = user+"_testSound.wav";
+                File file = new File(name);
 
-                    int toWrite = 0;
-                    byte[]buffer = new byte[targetLine.getBufferSize()/5];
-                    byte[]audio;
-                    targetLine.start();
+                targetLine.start();
 
-                    AudioInputStream is = new AudioInputStream(targetLine);
+                AudioInputStream is = new AudioInputStream(targetLine);
 
-                    while(recording){
-                        boolean toDo = (streaming == true)?stream():record(file,is);
-                    }
-                    System.out.println("RECORDING STOPPED");
-                };
-                Thread record = new Thread(recordThread);
-                record.start();
-            }
-        });
-        stop.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                recording = false;
-                targetLine.stop();
-                targetLine.close();
-            }
-        });
-        play.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                String[] options = {"local file","received file"};
-                int response = JOptionPane.showOptionDialog(null, "which file to play", "AudioFile",
-                        JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE,
-                        null, options, options[0]);
-                String file = (response == 0)?user+"_testSound.wav":user+"_received-testSound.wav";
-                File audioFile = new File(file);
-                play(audioFile);
-            }
-        });
-        send.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                recipient = JOptionPane.showInputDialog(
-                        frame,
-                        "Enter the name of the recipient",
-                        JOptionPane.QUESTION_MESSAGE);
-
-                String audioFile = user+"_testSound.wav";
-                File file = new File(audioFile);
-
-                out.println("%*file "+audioFile);
-                out.println(file.length());
-                out.println(recipient);
-
-                System.out.println("getting ready to send file to "+recipient);
-                try{
-
-                    byte[]buffer = new byte[(int)file.length()];
-                    BufferedInputStream fileStream = new BufferedInputStream(new FileInputStream(file));
-                    fileStream.read(buffer,0,buffer.length);
-
-                    os.write(buffer,0,buffer.length);
-                    System.out.println("FILE SEND SUCCESSFUL");
-                }catch(Exception s){
-                    s.printStackTrace();
+                System.out.println("BEGIN RECORDING");
+                while(recording){
+                   toDo = (streaming)?stream(is):record(file,is);
                 }
+                System.out.println("RECORDING STOPPED "+!toDo);
+            };
+            Thread thread= new Thread(recordThread);
+            thread.start();
+        });
+        stop.addActionListener(a-> {
+            recording = false;
+            targetLine.stop();
+            targetLine.close();
+        });
+        play.addActionListener(a-> {
+            String[] options = {"local file","received file"};
+            int response = JOptionPane.showOptionDialog(null, "which file to play", "AudioFile",
+                    JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE,
+                    null, options, options[0]);
+            String file = (response == 0)?user+"_testSound.wav":user+"_received-testSound.wav";
+            File audioFile = new File(file);
+            play(audioFile);
+        });
+        send.addActionListener(a-> {
+            recipient = JOptionPane.showInputDialog(
+                    frame,
+                    "Enter the name of the recipient",
+                    JOptionPane.QUESTION_MESSAGE);
+
+            String audioFile = user+"_testSound.wav";
+            File file = new File(audioFile);
+
+            out.println("%*file "+audioFile);
+            out.println(file.length());
+            out.println(recipient);
+
+            System.out.println("getting ready to send file to "+recipient);
+            try{
+
+                byte[]buffer = new byte[(int)file.length()];
+                BufferedInputStream fileStream = new BufferedInputStream(new FileInputStream(file));
+                fileStream.read(buffer,0,buffer.length);
+
+                os.write(buffer,0,buffer.length);
+                System.out.println("FILE SEND SUCCESSFUL");
+            }catch(Exception s){
+                s.printStackTrace();
             }
         });
         dataField.addActionListener(new ActionListener() {
@@ -174,7 +160,7 @@ public class CapitalizeClient {
 
             source.start();
 
-            byte[]buffer = new byte[1028];
+            byte[]buffer = new byte[4096];
             int read = -1;
 
             while((read = audio.read(buffer,0,buffer.length)) != -1){
@@ -186,35 +172,25 @@ public class CapitalizeClient {
             w.printStackTrace();
         }
     }
-    public boolean stream(){
-        recording = true;
+    public boolean stream(AudioInputStream is){
+        int toWrite;
 
-        ByteArrayOutputStream os = new ByteArrayOutputStream();
-        //File file = new File("testSound.wav");
+        byte[]buffer = new byte[targetLine.getBufferSize()/5];
 
-        int toWrite = 0;
-        byte[]buffer = new byte[60*1000];
-        byte[]audio;
-        targetLine.start();
-
-        //AudioInputStream is = new AudioInputStream(targetLine);
-
-        while(recording){
-            toWrite = targetLine.read(buffer,0,buffer.length);
-            os.write(toWrite);
-            audio = os.toByteArray();
-            try{
-                DatagramPacket packet = new DatagramPacket(audio,audio.length,InetAddress.getByName("::1"),9999);
-                datagramSocket.send(packet);
-            }catch (IOException i){
-                i.printStackTrace();
+        try{
+            toWrite = is.read(buffer,0,buffer.length);
+            if(toWrite > 0){
+                os.write(buffer,0,buffer.length);
             }
+        }catch (IOException i){
+            i.printStackTrace();
         }
-        System.out.println("RECORDING STOPPED");
         return recording;
     }
+
     public boolean record(File file,AudioInputStream is){
         try{
+            System.out.println("BEGIN RECORDING");
             AudioSystem.write(is,AudioFileFormat.Type.WAVE,file);
         }catch (IOException i){
             i.printStackTrace();
@@ -248,6 +224,8 @@ public class CapitalizeClient {
             while(true){
                 try {
                     response = in.readLine();
+                    if(recording)continue;
+
                     if (response == null || response.equals(".@kill")) {
                         System.out.println("client to terminate.");
                         socket.close();
@@ -292,10 +270,7 @@ public class CapitalizeClient {
 
     public void setVoiceServices(){
         try{
-            //Random random = new Random();
-            //datagramSocket = new DatagramSocket(socket.getLocalSocketAddress());
-            //System.out.println("INET ADRESS "+datagramSocket.getLocalSocketAddress());
-            AudioFormat format = new AudioFormat(44100,16,1,true,false);
+            AudioFormat format = new AudioFormat(44100,16,2,true,false);
             DataLine.Info info = new DataLine.Info(SourceDataLine.class,format);
             DataLine.Info tInfo = new DataLine.Info(TargetDataLine.class,format);
 

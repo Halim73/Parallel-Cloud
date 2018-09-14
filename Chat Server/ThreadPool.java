@@ -41,6 +41,9 @@ public class ThreadPool {
     LinkedBlockingQueue<DatagramPacket>voices;
 
     Queue<DatagramSocket>voiceConnections;
+
+    SourceDataLine source;
+
     protected class Worker extends Thread{
         private volatile boolean end = false;
         public void end(){
@@ -247,6 +250,44 @@ public class ThreadPool {
         thread.start();
     }
 
+    public void play(InputStream is){
+        try{
+            AudioFormat format = new AudioFormat(44100,16,2,true,false);
+            if(!source.isOpen())source.open(format);
+
+            if(source.isActive()){
+                System.out.println("ACTIVE SOURCE");
+            }else{
+                System.out.println("INACTIVE SOURCE");
+            }
+            source.addLineListener(event ->  {
+                if(event.getType() == LineEvent.Type.STOP){
+                    System.out.println("FINISHED RECEIVING AUDIO");
+                }else if(event.getType() == LineEvent.Type.START){
+                    System.out.println("STARTING TO RECEIVE AUDIO");
+                }else {
+                    System.out.println("NO INPUT RECEIVED");
+                }
+            });
+
+            System.out.println("INPUT RECEIVED");
+            byte[]buffer = new byte[source.getBufferSize()/5];
+            int read;
+
+            AudioInputStream audio = new AudioInputStream(is,format,buffer.length);
+            while((read = audio.read(buffer,0,buffer.length)) != -1){
+                if(read != 0){
+                    source.write(buffer,0,buffer.length);
+                    System.out.println("READING FROM SOURCE "+(byte)read);
+                }
+                //AudioSystem.write(audio,AudioFileFormat.Type.WAVE,file);
+            }
+            source.drain();
+            //audio.close();
+        }catch(Exception e){
+            e.printStackTrace();
+        }
+    }
     public synchronized void tellAll(){
         try{
             String message = messages.take();
@@ -274,45 +315,24 @@ public class ThreadPool {
             e.printStackTrace();
         }
     }
-    public void submitVoiceChatServer(Socket socket,DatagramSocket datagramSocket,int client){
+    public void submitVoiceChatServer(Socket socket,DatagramSocket datagramSocket,DataInputStream is,int client){
         try{
-            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             PrintWriter out = new PrintWriter(socket.getOutputStream());
 
             Runnable voiceServer = ()->{
                 try{
-                    AudioFormat format = new AudioFormat(44100,16,1,true,false);
+                    AudioFormat format = new AudioFormat(44100,16,2,true,false);
                     DataLine.Info info = new DataLine.Info(SourceDataLine.class,format);
-                    SourceDataLine source = (SourceDataLine)AudioSystem.getLine(info);
+                    source = (SourceDataLine)AudioSystem.getLine(info);
                     source.open(format);
+
                     source.start();
-
-                    byte[]buffer = new byte[source.getBufferSize()/4];
-
-                    DatagramPacket packet = new DatagramPacket(buffer,buffer.length);
-                    ByteArrayInputStream bs = new ByteArrayInputStream(packet.getData());
 
                     System.out.println("BEGINNING TO STREAM VOICE SERVICES");
                     while(true){
-                        datagramSocket.receive(packet);
-                        AudioInputStream as = new AudioInputStream(bs,format,packet.getLength());
-
-                        try{
-                            byte[]sound = packet.getData();
-                            if(sound.length > 0){
-                                for(byte b:sound){
-                                    System.out.println("BYTE IS "+b);
-                                }
-                            }
-                            source.write(sound,0,sound.length);
-                            //streamToAll();
-                        }catch(Exception e1){
-                            e1.printStackTrace();
-                            break;
-                        }
+                        play(is);
+                        //System.out.println("PLAYING");
                     }
-                    source.drain();
-                    source.close();
                 }catch (Exception e){
                     e.printStackTrace();
                 }
@@ -369,6 +389,7 @@ public class ThreadPool {
                             out.println("Bye user#"+userName+"!");
                             out.println(".@kill");
                             chatOutputs.remove(client);
+                            chatUsers.remove(userName);
                             break;
                         }
                         if(input.startsWith("@!")){
@@ -405,7 +426,7 @@ public class ThreadPool {
                             out.println(toConnect.getLocalSocketAddress());
                             out.println(toConnect.getPort());
 
-                            submitVoiceChatServer(socket,toConnect,client);
+                            submitVoiceChatServer(socket,toConnect,is,client);
 
                             streaming = true;
                             System.out.println("SUBMITTING VOICE SERVICES TO JOB QUEUE");
