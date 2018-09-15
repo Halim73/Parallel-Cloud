@@ -2,6 +2,7 @@ import com.sun.org.apache.bcel.internal.ExceptionConstants;
 
 import java.io.*;
 import java.net.*;
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -36,7 +37,7 @@ public class ThreadPool {
     ConcurrentHashMap<String,Integer>chatUsers;
     ConcurrentHashMap<Integer,ArrayList<Object>>chatOutputs;
     ConcurrentHashMap<Integer,LinkedList<String>>response;
-    ConcurrentHashMap<Integer,DatagramSocket>voiceUsers;
+    ConcurrentHashMap<Integer,Boolean>voiceUsers;
     LinkedBlockingQueue<String>messages;
     LinkedBlockingQueue<DatagramPacket>voices;
 
@@ -250,16 +251,12 @@ public class ThreadPool {
         thread.start();
     }
 
-    public void play(InputStream is){
+    public boolean play(PushbackInputStream is){
         try{
             AudioFormat format = new AudioFormat(44100,16,2,true,false);
+
             if(!source.isOpen())source.open(format);
 
-            if(source.isActive()){
-                System.out.println("ACTIVE SOURCE");
-            }else{
-                System.out.println("INACTIVE SOURCE");
-            }
             source.addLineListener(event ->  {
                 if(event.getType() == LineEvent.Type.STOP){
                     System.out.println("FINISHED RECEIVING AUDIO");
@@ -270,23 +267,30 @@ public class ThreadPool {
                 }
             });
 
-            System.out.println("INPUT RECEIVED");
-            byte[]buffer = new byte[source.getBufferSize()/5];
             int read;
+            byte[]buffer = new byte[source.getBufferSize()/5];
 
             AudioInputStream audio = new AudioInputStream(is,format,buffer.length);
+            is.read(buffer,0,buffer.length);
+
+            if(!buffer.toString().contains("%end_stream")){
+                is.unread(buffer,0,buffer.length);
+            }else{
+                System.out.println("FOUND END OF AUDIO STREAM");
+                return false;
+            }
             while((read = audio.read(buffer,0,buffer.length)) != -1){
-                if(read != 0){
+                if(read > 0){
                     source.write(buffer,0,buffer.length);
                     System.out.println("READING FROM SOURCE "+(byte)read);
                 }
-                //AudioSystem.write(audio,AudioFileFormat.Type.WAVE,file);
             }
-            source.drain();
-            //audio.close();
+            source.flush();
         }catch(Exception e){
             e.printStackTrace();
+            return false;
         }
+        return true;
     }
     public synchronized void tellAll(){
         try{
@@ -300,21 +304,7 @@ public class ThreadPool {
             e.printStackTrace();
         }
     }
-    public synchronized void streamToAll(){
-        try{
-            DatagramPacket packet = voices.take();
-            System.out.println("CONSUMED AND DISTRIBUTING PACKET OF SIZE "+packet.getLength());
-            voiceUsers.forEachValue(10,(DatagramSocket s)->{
-                try{
-                    s.send(packet);
-                }catch(IOException i){
-                    i.printStackTrace();
-                }
-            });
-        }catch(InterruptedException e){
-            e.printStackTrace();
-        }
-    }
+
     public void submitVoiceChatServer(Socket socket,DatagramSocket datagramSocket,DataInputStream is,int client){
         try{
             PrintWriter out = new PrintWriter(socket.getOutputStream());
@@ -328,18 +318,32 @@ public class ThreadPool {
 
                     source.start();
 
+                    PushbackInputStream pushBack = new PushbackInputStream(is,source.getBufferSize()/5);
+
                     System.out.println("BEGINNING TO STREAM VOICE SERVICES");
-                    while(true){
-                        play(is);
-                        //System.out.println("PLAYING");
-                    }
+                    boolean playing = true;
+                    do{
+                        playing = play(pushBack);
+                        synchronized (voiceUsers){
+                            if(!voiceUsers.get(client)){
+                                playing = false;
+                                System.out.println("TRYING TO END SERVICES");
+                                break;
+                            }
+                        }
+                    }while(playing);
+                    System.out.println("ENDING STREAMED VOICE SERVICES");
+                    return;
                 }catch (Exception e){
                     e.printStackTrace();
+                }finally {
+                    source.close();
+                    voiceUsers.remove(client);
                 }
             };
             CustomJob job = new CustomJob(client,voiceServer);
             if(!voiceUsers.containsKey(client)){
-                voiceUsers.put(client,datagramSocket);
+                voiceUsers.put(client,true);
             }
 
             synchronized (mainQueue){
@@ -395,6 +399,13 @@ public class ThreadPool {
                         if(input.startsWith("@!")){
                             directChat = false;
                             continue;
+                        }
+                        if(input.contains("%end_stream")){
+                            synchronized (voiceUsers){
+                                voiceUsers.replace(client,true,false);
+                                streaming = false;
+                                System.out.println("SIGNALING END OF AUDIO");
+                            }
                         }
                         if(input.startsWith("@@")){//@@-user
                             String[]parse = input.split("-");
@@ -471,8 +482,9 @@ public class ThreadPool {
                             }
                         }
                         input = userName+": "+input;
-                        System.out.println("AT THE START OF THE LOOP WITH MESSAGE: "+input);
+                        //System.out.println("AT THE START OF THE LOOP WITH MESSAGE: "+input);
                         try{
+                            if(streaming)continue;
                             messages.put(input);
                             System.out.println("PLACED MESSAGE");
                         }catch(InterruptedException e){
@@ -492,7 +504,7 @@ public class ThreadPool {
             if(!chatOutputs.containsKey(client)){
                 ArrayList<Object>streams = new ArrayList<>();
                 streams.add(0,out);//printwriter
-                streams.add(1,os);//inputstream
+                streams.add(1,os);//outputstream
 
                 chatOutputs.put(client,streams);
                 System.out.println("ADDED TO USERS");

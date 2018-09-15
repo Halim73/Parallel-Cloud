@@ -35,10 +35,12 @@ public class CapitalizeClient {
     private SourceDataLine source;
     private boolean recording = false;
     private boolean streaming = false;
+    private boolean startedRecThread = false;
     private String recipient;
     private String user;
     private String inet;
     private int port;
+    private Object object = new Object();
     /**
      * Constructs the client by laying out the GUI and registering a
      * listener with the textfield so that pressing Enter in the
@@ -71,30 +73,61 @@ public class CapitalizeClient {
         caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
         // Add Listeners
         record.addActionListener(a-> {
-            Runnable recordThread = ()->{
+            if(!startedRecThread){
+                Runnable recordThread = ()->{
+                    recording = true;
+                    boolean toDo =  false;
+
+                    String name = user+"_testSound.wav";
+                    File file = new File(name);
+
+                    targetLine.start();
+
+                    AudioInputStream is = new AudioInputStream(targetLine);
+
+                    System.out.println("BEGIN RECORDING");
+                    while(true){
+                        while(!recording){
+                            synchronized (object){
+                                try{
+                                    object.wait();
+                                }catch (InterruptedException e){
+                                    e.printStackTrace();
+                                }
+                            }
+                        }
+                        while(recording){
+                            toDo = (streaming)?stream(is):record(file,is);
+                        }
+                    }
+                    //System.out.println("RECORDING STOPPED "+!toDo);
+                };
+                Thread thread= new Thread(recordThread);
+                thread.start();
+                startedRecThread = true;
+            }else{
                 recording = true;
-                boolean toDo =  false;
-
-                String name = user+"_testSound.wav";
-                File file = new File(name);
-
-                targetLine.start();
-
-                AudioInputStream is = new AudioInputStream(targetLine);
-
-                System.out.println("BEGIN RECORDING");
-                while(recording){
-                   toDo = (streaming)?stream(is):record(file,is);
+                synchronized (object){
+                    object.notifyAll();
                 }
-                System.out.println("RECORDING STOPPED "+!toDo);
-            };
-            Thread thread= new Thread(recordThread);
-            thread.start();
+            }
         });
         stop.addActionListener(a-> {
+            System.out.println("RECORDING STOPPED ");
             recording = false;
+
+            targetLine.flush();
             targetLine.stop();
             targetLine.close();
+
+            if(streaming){
+                try{
+                    os.flush();
+                    out.println("%end_stream\n");
+                }catch(Exception e){
+                    e.printStackTrace();
+                }
+            }
         });
         play.addActionListener(a-> {
             String[] options = {"local file","received file"};
@@ -187,7 +220,6 @@ public class CapitalizeClient {
         }
         return recording;
     }
-
     public boolean record(File file,AudioInputStream is){
         try{
             System.out.println("BEGIN RECORDING");
@@ -197,13 +229,14 @@ public class CapitalizeClient {
         }
         return recording;
     }
+
     public void connectToServer() throws IOException {
 
         // Get the server address from a dialog box.
         String serverAddress = JOptionPane.showInputDialog(
                 frame,
                 "Enter IP Address of the Server:",
-                "Welcome to the Capitalization Program",
+                "Welcome to the Halims Chat Program",
                 JOptionPane.QUESTION_MESSAGE);
 
         // Make connection and initialize streams
